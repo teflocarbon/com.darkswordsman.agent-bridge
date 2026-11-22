@@ -44,6 +44,8 @@ namespace DarkSwordsman.AgentBridge
             ["save"] = Save,
             ["open"] = Open,
             ["play"] = Play,
+            // arbitrary C#, in Exec.cs
+            ["exec"] = Exec,
         };
 
         private static readonly HashSet<string> NoiseProps = new HashSet<string>

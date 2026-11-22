@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `exec` compiles and runs a C# snippet in the editor, with `Print(...)`, `Find(path)`, snippet line numbers in errors and one Undo step. It uses Unity's bundled Roslyn compiler and falls back to CodeDom. `ub exec` takes the code bare, from `file=` or from stdin; multi-line code (including over MCP) goes through a side file next to the request.
+
 ## 0.3.1 (2026-10-31)
 
 - Windows: `Tools~/ub.cmd` launcher, which **Copy ub Path** now copies on Windows. Not yet confirmed on Windows ([#1](https://github.com/dark-swordsman/com.darkswordsman.agent-bridge/issues/1)).

@@ -9,8 +9,9 @@ Requests go to <project>/Temp/AgentBridge/in/, answers come back from .../out/<i
 The full answer always stays on disk; only a preview of --max characters (default 6000) is printed.
 Reads: ping, find, hierarchy, props, material, mesh, overrides, select, refresh.
 Writes: set, setmat, create, delete, duplicate, reparent, addcomp, rmcomp, apply, revert, menu, save, open, play.
+Code: exec runs a C# method body in the editor (`ub exec "<C#>"`, `ub exec file=x.cs`, `ub exec - < x.cs`).
 A bare word after the command becomes action= (`ub play enter`). `menu` waits up to 600 s by default
-(menu items like test builds block Unity). See README.md.
+(menu items like test builds block Unity). `exec` waits up to 120 s. See README.md.
 """
 import json
 import os
@@ -109,14 +110,23 @@ def logs_text(project, pattern=None, everything=False, stack=False, raw=False):
 
 def request(project, cmd, pairs, timeout=None):
     """Send one command to Unity. Returns (exit code, text, path of the full answer or None)."""
-    timeout = float(timeout or (600 if cmd == "menu" else 30))
-    for k, v in pairs:
-        if "\n" in k or "\n" in v or "=" in k:
-            return 2, f"ub: bad argument {k!r}: keys can't contain '=' and nothing can contain newlines", None
+    timeout = float(timeout or {"menu": 600, "exec": 120}.get(cmd, 30))
     root = os.path.join(project, "Temp", "AgentBridge")
     in_dir, out_dir = os.path.join(root, "in"), os.path.join(root, "out")
     os.makedirs(in_dir, exist_ok=True)
     rid = time.strftime("%H%M%S-") + uuid.uuid4().hex[:6]
+    # Request lines can't hold newlines, so multi-line exec code goes in a side file Unity deletes once read.
+    side = None
+    if cmd == "exec":
+        for i, (k, v) in enumerate(pairs):
+            if k == "code" and "\n" in v:
+                side = os.path.join(in_dir, rid + ".cs")
+                with open(side, "w", encoding="utf-8") as f:
+                    f.write(v)
+                pairs[i] = ("file", side)
+    for k, v in pairs:
+        if "\n" in k or "\n" in v or "=" in k:
+            return 2, f"ub: bad argument {k!r}: keys can't contain '=' and nothing can contain newlines", None
     req = os.path.join(in_dir, rid + ".req")
     with open(req + ".tmp", "w", encoding="utf-8") as f:
         f.write("\n".join([cmd] + [f"{k}={v}" for k, v in pairs]) + "\n")
@@ -133,6 +143,8 @@ def request(project, cmd, pairs, timeout=None):
     picked_up = not os.path.exists(req)
     if not picked_up:
         os.remove(req)
+        if side and os.path.exists(side):
+            os.remove(side)
     state = "Unity took the request but hasn't answered (long command?)" if picked_up else \
         "nobody picked it up: is the editor open, compiling, or missing the package?"
     return 3, f"ub: timed out after {timeout:.0f}s; {state}", None
@@ -148,6 +160,10 @@ MCP_TOOLS = [
             "Run an Agent Bridge command in the open Unity editor and get a short plain-text answer. "
             "Reads: ping, find, hierarchy, props, material, mesh, overrides. "
             "Writes: set, setmat, create, delete, duplicate, reparent, addcomp, rmcomp, apply, revert, select, refresh, menu, save, open, play. "
+            "Code: exec runs C# in the editor: {command:'exec', args:{code:'return Selection.activeGameObject;'}}. "
+            "The code is a method body returning object (one expression needs no return or semicolon); newlines are fine. "
+            "Print(x) adds a line of output, Find('Root/Child') gets a scene object (inactive too), Unity objects print as paths. "
+            "Undo reverts everything it did through Undo in one step. "
             "Objects are addressed by path=<scene path> (inactive objects included) or asset=<.prefab> plus path= inside it. "
             "Examples: {command:'props', args:{path:'Avatar/Hoodie', component:'Toggle'}}; "
             "{command:'set', args:{path:'Avatar/Hoodie', component:'Transform', m_LocalPosition:'0,0.1,0'}} "
@@ -269,6 +285,25 @@ def main():
         pattern = take_opt(rest, "-g", None)
         sys.stdout.write(cap(logs_text(project, pattern, "--all" in rest, "--stack" in rest, "--raw" in rest), limit))
         return 0
+
+    if cmd == "exec":
+        # C# is full of '=' and spaces, so exec takes its code whole: `-` (stdin), file=, code=, or bare words.
+        if rest == ["-"]:
+            pairs = [("code", sys.stdin.read())]
+        elif len(rest) == 1 and rest[0].startswith("file="):
+            pairs = [("file", os.path.abspath(rest[0][5:]))]
+        elif rest:
+            code = " ".join(rest)
+            pairs = [("code", code[5:] if code.startswith("code=") else code)]
+        else:
+            print("ub: exec needs code: ub exec '<C#>', ub exec file=<snippet.cs>, or ub exec - < snippet.cs", file=sys.stderr)
+            return 2
+        code, text, path = request(project, cmd, pairs, timeout)
+        if code in (2, 3):
+            print(text, file=sys.stderr)
+        else:
+            sys.stdout.write(cap(text, limit, path))
+        return code
 
     if rest and "=" not in rest[0]:
         rest[0] = "action=" + rest[0]

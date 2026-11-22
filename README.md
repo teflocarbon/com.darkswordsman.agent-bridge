@@ -10,6 +10,7 @@ It's a general Unity tool, built and tested on **Unity 2022.3** for **VRChat** p
 
 - **Edits happen without confirmation.** `ub` changes the open editor directly. Scene edits can be undone (one Undo step per command) and stay unsaved until `ub save`. **Prefab, asset and material edits save to disk immediately.** Commit to git before you let an agent loose.
 - **`menu` runs any menu item,** which in practice means arbitrary editor code, including from other packages.
+- **`exec` runs whatever C# it's given** with the editor's full access: files, processes, the network. There's no sandbox or blocklist.
 - **No authentication.** Anything that can write a file into `<project>/Temp/AgentBridge/in/` can drive the editor while it's open. That's no more than local file access already allows, but know it's there. Nothing listens on the network.
 - **Your agent's permission settings are the only gate.** Keep per-command approval on (for the shell or the MCP tool) until you trust what it does.
 - Tested on Linux with Unity 2022.3. **Windows is written for but not yet confirmed**; see [issue #1](https://github.com/dark-swordsman/com.darkswordsman.agent-bridge/issues/1).
@@ -128,6 +129,27 @@ ub play [enter|exit|pause|resume]                        # alone, shows play mod
 - `set` takes `<propertyPath>=<value>` pairs and applies them in order. It accepts the same paths and value formats that `props` prints, so you can read a value and write it back. `component=GameObject` targets the GameObject itself. On a non-prefab asset (`.asset`, `.controller`, …), `set` edits the asset itself, and `sub=` picks a sub-asset by name.
 - Scene edits are undoable, one Undo step per command (`ub menu item=Edit/Undo` works). They only dirty the scene until `save`. Edits with `asset=<.prefab>` or on plain assets, and `setmat`, save the asset immediately, so commit first.
 - Each write prints what changed (`old -> new`). Errors list what does exist: similar property paths, the components on the object, the types that fit a managed reference.
+
+## 🧪 Exec
+
+For questions the commands above can't answer, `exec` compiles C# and runs it in the editor.
+
+```
+ub exec <C#>                                             # one expression, or statements ending in ;
+    ub exec 'Selection.activeGameObject'
+    ub exec 'Find("Avatar/Body").GetComponent<SkinnedMeshRenderer>().sharedMesh.blendShapeCount'
+
+ub exec file=<snippet.cs>                                # path relative to where you run ub
+ub exec - < snippet.cs                                   # or from stdin
+```
+
+- The code is the body of a method returning `object`. A single line that doesn't end in `;` or `}` is an expression and is returned for you. Leading `using X;` lines are allowed.
+- `System`, `System.Linq`, `System.Collections.Generic`, `System.IO`, `System.Reflection`, `System.Text`, `UnityEngine`, `UnityEditor` and both `SceneManagement` namespaces are already imported.
+- `Print(x)` adds a line of output. `Find("Root/Child")` returns a scene object the way `path=` resolves it, inactive objects included.
+- Unity objects print as scene or asset paths, like `props` prints references. Collections print one item per line.
+- Errors give the snippet's line number, for compile errors and exceptions alike. Output from `Print` before an exception is still shown.
+- Anything the code records through `Undo` reverts as one step. Nothing is saved; use `ub save`.
+- It compiles with the Roslyn compiler Unity ships (current C#) and falls back to Mono's CodeDom (C# 7) if that's missing. Identical snippets reuse their assembly. Mono can't unload assemblies, so each new snippet stays loaded until the next domain reload.
 
 ## 🔌 MCP
 
